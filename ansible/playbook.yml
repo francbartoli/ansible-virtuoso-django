@@ -1,0 +1,455 @@
+---
+- hosts: all
+  user: vagrant
+  vars:
+      ansible_root:     ansible
+      workon_home:      /home/vagrant/virtenvs
+      virtenv_name:     devenv
+      virtenv:          '{{ workon_home }}/{{ virtenv_name }}'
+      project_name:     djangoproject
+      project_location: /vagrant
+      user:             vagrant
+      group:            vagrant
+      db_backend:       postgis
+      db_name:          '{{ project_name }}'
+      db_user:          django
+      db_password:      test
+      db_host:          localhost
+      pg_config:        /var/lib/pgsql/9.3/data
+      pg_user_password: PGPassword5
+      postgis_script_location: '/usr/share/pgsql/contrib'
+      postgis_template_name: 'template_postgis'
+      mapserver_ver: '6.0.3'
+      mapserver_installation_location: '/var/www/cgi-bin'
+
+  tasks:
+    - name: Install EPEL repo
+      sudo: True
+      shell: creates=/etc/yum.repos.d/epel.repo rpm -Uvh http://dl.fedoraproject.org/pub/epel/6/x86_64/epel-release-6-8.noarch.rpm
+
+    - name: Install Postgres and PostGIS repo
+      sudo: True
+      ignore_errors: True
+      shell: creates=/etc/yum.repos.d/pgdg-93-centos rpm -Uvh http://yum.postgresql.org/9.3/redhat/rhel-5-x86_64/pgdg-centos93-9.3-1.noarch.rpm
+
+    - name: Set Vagrant Home Dir Permissions
+      file:
+          path=/home/{{ user }}
+          mode=0705
+
+    - name: Install Yum Packages
+      sudo: True
+      yum: pkg={{ item }} state=present
+      with_items:
+        - '@development'    # Development Tools group
+        - vim-X11
+        - vim-common
+        - vim-enhanced
+        - vim-minimal
+        - subversion
+        - git
+        - mercurial
+        - emacs
+        - nano
+        - tree
+        - iptables
+        - tar
+        - unzip
+        - zip
+        - gzip
+        - yum-utils
+        - man
+        - libselinux-python
+
+        - blas-devel
+        - lapack-devel
+        - libxml2
+        - libxml2-devel
+        - libxslt
+        - libxslt-devel
+        # - eigen3-devel
+        - scons
+        - cmake
+        # - gengetopt
+        - erlang
+
+        - postgresql93-server
+        - postgresql93-devel
+        - postgresql93-libs
+        - postgresql93-contrib
+        - postgresql93
+        - postgis2_93
+        - postgis2_93-client
+
+        - libpng
+        - libpng-devel
+        - freetype
+        - freetype-devel
+        - gd
+        - gd-devel
+        - zlib
+        - zlib-devel
+        - curl
+        - libcurl
+        - libcurl-devel
+        - agg
+        - agg-devel
+        - libtiff
+        - libtiff-devel
+        - libgeotiff
+        - libjpeg
+        - geos
+        - geos-devel
+        - libxml2
+        - libxml2-devel
+        - postgresql-devel
+        - postgresql-libs
+        - giflib
+        - giflib-devel
+        - fcgi
+        - fcgi-devel
+        - mod_fcgid
+
+        - gdal
+        - gdal-devel
+        - gdal-python
+
+        - proj
+        - proj-devel
+        - proj-epsg
+        - proj-nad
+
+        - graphviz
+        - graphviz-devel
+        - graphviz-gd
+        - readline
+        - readline-devel
+
+        - httpd
+        - mod_wsgi
+
+    - name: Disable SELinux
+      sudo: True
+      selinux: state=disabled
+
+    - name: Install RabbitMQ server
+      sudo: True
+      shell: creates=/usr/sbin/rabbitmqctl rpm -Uvh http://www.rabbitmq.com/releases/rabbitmq-server/v3.0.1/rabbitmq-server-3.0.1-1.noarch.rpm
+
+    - name: RabbitMQ service
+      sudo: True
+      service: name=rabbitmq-server state=started
+
+    ## - name: Stop iptables
+    ##   service: name=iptables state=stopped
+
+    # Python stuff
+    - name: Install Python dependencies
+      sudo: True
+      yum: pkg={{ item }} state=present
+      with_items:
+        - python
+        - python-devel
+        - python-docs
+        - python-setuptools
+
+    - name: Install pip
+      sudo: True
+      easy_install: name=pip
+
+    - name: Install virtualenv
+      sudo: True
+      pip: name={{ item }}
+      with_items:
+        - virtualenv
+        - virtualenvwrapper
+
+    - name: Copy bash_profile
+      template:
+          src: templates/bash_profile.j2
+          dest: /home/{{ user }}/.bash_profile
+
+    # Postgres
+  #  - name: Install psycopg2 globally
+  ##    sudo: True
+   #   pip: name=psycopg2
+    - name: Install Psycopg2
+      sudo: True
+      pip: name=psycopg2 state=present
+      environment:
+            PATH: /usr/pgsql-9.3/bin:{{ ansible_env.PATH }}
+
+    - name: Postgres data dir
+      sudo: True
+      file:
+          path: /var/lib/pgsql/9.3/data
+          state: directory
+          mode: 0700
+          owner: postgres
+          group: postgres
+
+    - name: PG initdb
+      sudo: True
+      shell: chdir=/var/lib/pgsql/9.3/data creates=/var/lib/pgsql/9.3/data/postgresql.conf /sbin/service postgresql-9.3 initdb
+
+    - name: pg_hba.conf
+      sudo: True
+      copy:
+          src: files/pg_hba.conf
+          dest: '{{ pg_config }}/pg_hba.conf'
+          owner: postgres
+          group: postgres
+
+    - name: postgresql.conf
+      sudo: True
+      copy:
+          src: files/postgresql.conf
+          dest: '{{ pg_config }}/postgresql.conf'
+          owner: postgres
+          group: postgres
+
+    - name: Postgres service
+      sudo: True
+      service: name=postgresql-9.3 state=started
+
+    - name: createadmin
+      sudo: True
+      sudo_user: postgres
+      postgresql_user: name=postgres
+                       password='{{ pg_user_password }}'
+
+    - name: Copy PostGIS install template script
+      template:
+          src: templates/postgis_install.sh.j2
+          dest: /tmp/postgis_install.sh
+          mode: 0777
+
+    - name: Get Available Databases
+      sudo: True
+      sudo_user: postgres
+      command: /usr/bin/psql -l
+      register: databases
+
+    - name: PostGIS install
+      sudo: True
+      sudo_user: postgres
+      ignore_errors: True
+      shell: /tmp/postgis_install.sh
+      when: databases.stdout.find('{{ postgis_template_name }}') == -1
+
+    - name: Create WORKON_HOME directory
+      file:
+          path: '{{ workon_home }}'
+          state: directory
+
+    - name: Create virtualenv
+      shell: creates={{ workon_home }}/{{ virtenv_name }} virtualenv {{ workon_home }}/{{ virtenv_name }} --system-site-packages
+
+    - name: Copy virtualenv .project file
+      template:
+          src: templates/project.j2
+          dest: '{{ workon_home }}/{{ virtenv_name }}/.project'
+
+
+    - name: Install virtualenv numpy
+      pip: name=numpy version=1.6.2 virtualenv={{ workon_home }}/{{ virtenv_name }}
+
+    # Project packages
+    - name: Install virtualenv packages
+      pip:
+          requirements: '{{ project_location }}/{{ project_name }}/{{ project_name }}/requirements/requirements.txt'
+          virtualenv: '{{ workon_home }}/{{ virtenv_name }}'
+
+    - name: Get Installed Packages
+      shell: '{{ workon_home }}/{{ virtenv_name }}/bin/pip freeze'
+      register: virtenv_pip_freeze
+    - name: Install Project Packages
+      pip:
+          # name: '{{ item.installed }}'
+          name: '{{ item.location }}'
+          # extra_args: '-e {{ item.location }}'
+          extra_args: '-e'
+          virtualenv: '{{ workon_home }}/{{ virtenv_name }}'
+      when: virtenv_pip_freeze.stdout.find(item.installed) == -1
+      with_items:
+        - installed: 'django-Cybereye'
+          location: '{{ project_location }}/packages/django-Cybereye/'
+        - installed: 'django-Autocomplete'
+          location: '{{ project_location }}/packages/django-AutoComplete/'
+        - installed: 'django-CollabGroups'
+          location: '{{ project_location }}/packages/django-CollabGroups/'
+        - installed: 'django-CollabGroups-Members'
+          location: '{{ project_location }}/packages/django-CollabGroups-Members/'
+        - installed: 'django-CollabMessage'
+          location: '{{ project_location }}/packages/django-CollabMessage/'
+        - installed: 'django-CollabNotifications'
+          location: '{{ project_location }}/packages/django-CollabNotifications/'
+        - installed: 'django-Dashboard'
+          location: '{{ project_location }}/packages/django-Dashboard/'
+        - installed: 'django-MapServerDemo'
+          location: '{{ project_location }}/packages/django-MapServerDemo/'
+        - installed: 'django-WaveContourCalculator'
+          location: '{{ project_location }}/packages/django-WaveContourCalculator/'
+        - installed: 'GrassConnector'
+          location: '{{ project_location }}/packages/GrassConnector/'
+        - installed: 'MLSOperations'
+          location: '{{ project_location }}/packages/MLSOperations/'
+        - installed: 'WaveContourGenerator'
+          location: '{{ project_location }}/packages/WaveContourGenerator/'
+        - installed: 'ga-bigboard'
+          location: '{{ project_location }}/packages/ga_bigboard/'
+        - installed: 'django-JobManager'
+          location: '{{ project_location }}/packages/django-JobManager/'
+        - installed: 'django-HURDAT'
+          location: '{{ project_location }}/packages/django-HURDAT/'
+        - installed: 'django-CollabGroups-Files'
+          location: '{{ project_location }}/packages/django-CollabGroups-Files/'
+        - installed: 'django-CollabGroups-Publisher'
+          location: '{{ project_location }}/packages/django-CollabGroups-Publisher/'
+        - installed: 'django-Cybereye-warehouse'
+          location: '{{ project_location }}/packages/django-Cybereye-warehouse/'
+        - installed: 'HAKOUpy'
+          location: '{{ project_location }}/packages/HAKOUpy/'
+        - installed: 'django-crc-test-utils'
+          location: '{{ project_location }}/packages/django-crc-test-utils/'
+        - installed: 'django-ActivityMonitor'
+          location: '{{ project_location }}/packages/django-ActivityMonitor/'
+
+
+    # GDAL
+    - name: Copy GDAL virtualenv template script
+      template:
+          src: templates/gdal_virtenv.sh.j2
+          dest: /tmp/gdal_virtenv.sh
+          mode: 0700
+
+    - name: GDAL virtenv script
+      shell: /tmp/gdal_virtenv.sh
+
+    # GRASS
+    # MAPSERVER
+    - name: Get MapServer Package
+      unarchive:
+          src: files/mapserver-{{ mapserver_ver }}.tar.gz
+          dest: /tmp/
+          creates: /tmp/mapserver-{{ mapserver_ver }}
+    - name: Copy MapServer Config
+      copy:
+          src: files/mapserver_configuration
+          dest: /tmp/mapserver-{{ mapserver_ver }}/configuration
+          mode: 0777
+    - name: Build MapServer
+      shell: creates={{ mapserver_installation_location }}/mapserv chdir=/tmp/mapserver-{{ mapserver_ver }} /bin/sh configuration; /usr/bin/make;
+    - name: Copy MapServer Executable
+      sudo: True
+      shell: creates={{ mapserver_installation_location }}/mapserv cp /tmp/mapserver-{{ mapserver_ver }}/mapserv {{ mapserver_installation_location }}/mapserv; chmod a+rwx {{ mapserver_installation_location }}/mapserv;
+
+
+    - name: Create Django DB
+      sudo: True
+      sudo_user: postgres
+      postgresql_db: name='{{ db_name }}'
+                     template='{{ postgis_template_name }}'
+
+    - name: Create Django PG User
+      sudo: True
+      sudo_user: postgres
+      postgresql_user: name='{{ db_user}}'
+                       password='{{ db_password }}'
+                       role_attr_flags=CREATEDB
+    - name: Grant Django PG User DB priveledges
+      sudo: True
+      sudo_user: postgres
+      postgresql_user: db='{{ db_name }}'
+                       name='{{ db_user }}'
+                       priv=ALL
+
+    - name: Create PostGIS Reader Role
+      sudo: True
+      sudo_user: postgres
+      postgresql_user: db='{{ postgis_template_name }}'
+                       name=postgis_reader
+                       role_attr_flags=NOLOGIN,INHERIT
+                       priv=geometry_columns:SELECT/spatial_ref_sys:SELECT/geography_columns:SELECT
+    - name: Grant Reader Role to Django PG User
+      sudo: True
+      sudo_user: postgres
+      command: /usr/bin/psql -c 'GRANT postgis_reader TO {{ db_user }};'
+
+
+    ## Apache ##
+
+    - name: Apache Config
+      sudo: True
+      template:
+          src: templates/httpd.conf.j2
+          dest: /etc/httpd/conf/httpd.conf
+          mode: 0644
+      notify:
+          - Restart Apache
+
+    - name: Ensure Apache is Running
+      sudo: True
+      service:
+          name=httpd
+          state=started
+          enabled=yes
+
+
+    ## Django Setup ##
+
+    - name: Django setup
+      shell: chdir={{ project_location }}/{{ project_name }} {{ virtenv }}/bin/python manage.py {{ item }}
+      with_items:
+          - syncdb --noinput
+          - migrate --noinput
+          - collectstatic --noinput
+          - loaddata _initial_data
+          - collectNotificationTypes --all
+          - collectCollabGroupsModules --all
+
+    - name: Django Apache
+      sudo: True
+      template:
+          src: templates/wsgi_vhost.conf.j2
+          dest: /etc/httpd/conf.d/{{ project_name }}.conf
+          mode: 0644
+      notify:
+          - Restart Apache
+
+
+
+
+
+
+
+
+
+
+
+  handlers:
+      - name: Restart Apache
+        sudo: True
+        service: name=httpd state=restarted
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

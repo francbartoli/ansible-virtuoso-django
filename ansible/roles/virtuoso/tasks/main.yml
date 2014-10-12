@@ -1,0 +1,67 @@
+---
+# tasks file for virtuoso
+
+- name: Update aptitude cache and install dependencies.
+  yum:
+    pkg={{ item }}
+    state=present
+  with_items:
+    - git
+    - make
+    - gcc
+    - gcc-c++
+    - kernel-devel
+    - autoconf
+    - automake
+    - bison
+    - flex
+    - gawk
+    - gperf
+    - libtool
+    - openssl
+    - openssl-devel
+    - readline-devel
+  sudo: yes
+
+- name: Clone develop/7 branch of Virtuoso Github repo.
+  git:
+    repo=https://github.com/openlink/virtuoso-opensource.git
+    dest=/tmp/virtuoso
+    version=develop/7
+
+- name: Autogen the Virtuoso build configuration
+  shell: /tmp/virtuoso/autogen.sh
+    chdir=/tmp/virtuoso
+    creates=/tmp/virtuoso/autogen.log
+    executable=/bin/bash
+- name: Configure Makefile.
+  command: /tmp/virtuoso/configure --prefix={{ virtuoso_install_dir }}
+    chdir=/tmp/virtuoso
+    creates=/tmp/virtuoso/Makefile
+  environment:
+    cflags: "-O2 -m64"
+
+- name: Build Virtuoso from source.
+  command: make install
+    chdir=/tmp/virtuoso
+    creates="{{ virtuoso_install_dir }}/bin/virtuoso-t"
+  sudo: yes
+
+- name: Copy isql file to enable sparql
+  copy: src=virtuoso.isql dest=/tmp/virtuoso.isql
+  sudo: yes
+
+- name: Start virtuoso
+  supervisorctl: name=virtuoso state=restarted
+
+- name: Wait for virtuoso port to be open
+  wait_for: port=1111 delay=10
+
+- name: Run isql script to enable sparql permissions.
+  command: "{{ virtuoso_install_dir }}/bin/isql 1111 dba dba VERBOSE=OFF BANNER=OFF PROMPT=OFF ECHO=OFF BLOBS=ON ERRORS=stdout /tmp/virtuoso.isql"
+  notify:
+    - stop virtuoso
+    - clean source files
+    - stop supervisor
+    - remove build libs
+

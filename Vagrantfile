@@ -5,59 +5,42 @@
 VAGRANTFILE_API_VERSION = "2"
 
 Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
-  # All Vagrant configuration is done here. The most common configuration
-  # options are documented and commented below. For a complete reference,
-  # please see the online documentation at vagrantup.com.
+ config.vm.box = "chef/centos-6.5"
+    config.vm.box_url = "https://vagrantcloud.com/chef/centos-6.5/version/1/provider/virtualbox.box"
 
-  # Every Vagrant virtual environment requires a box to build off of.
-  config.vm.box = "ubuntu/trusty64"
+    config.vm.provider "virtualbox" do |vb|
+      # Sets the available memory to 1GB
+      vb.customize ["modifyvm", :id, "--memory", 1024, "--cpus", "2"]
+    end
 
-  # The url from where the 'config.vm.box' box will be fetched if it
-  # doesn't already exist on the user's system.
-#  config.vm.box_url = "http://cloud-images.ubuntu.com/vagrant/trusty/current/trusty-server-cloudimg-amd64-vagrant-disk1.box"
+
+    # Switching to nfs for only those who want it, to add more, it is space separated
+    nfs_hosts=%w(nsmith13-mbp dhcp-10-40-26-255)
+
+    require 'socket'
+    my_hostname=Socket.gethostname.split(/\./)[0]
+
+    if nfs_hosts.include?(my_hostname)
+          # Assign this VM to a host only network IP, allowing you to access it
+          # via the IP.
+          config.vm.network "private_network", ip: "192.168.56.123"
+          #config.vm.network :hostonly, "192.168.123.123"
+          config.vm.synced_folder ".", "/vagrant", type: "nfs"
+    else
+          config.vm.synced_folder ".", "/vagrant"
+    end
+
 
   # Create a forwarded port mapping which allows access to a specific port
   # within the machine from a port on the host machine. In the example below,
   # accessing "localhost:8080" will access port 80 on the guest machine.
-
+  config.vm.network "forwarded_port", guest: 80, host: 8080
   config.vm.network "forwarded_port", guest: 8889, host: 8889
   config.vm.network "forwarded_port", guest: 8890, host: 8890
-  # Create a private network, which allows host-only access to the machine
-  # using a specific IP.
-  config.vm.network "private_network", ip: "192.168.33.10"
 
-  # Share an additional folder to the guest VM. The first argument is
-  # the path on the host to the actual folder. The second argument is
-  # the path on the guest to mount the folder. And the optional third
-  # argument is a set of non-required options.
-  # config.vm.synced_folder "../data", "/vagrant_data"
-
-  # Provider-specific configuration so you can fine-tune various
-  # backing providers for Vagrant. These expose provider-specific options.
-  # Example for VirtualBox:
-  #
-  #config.vm.provider "virtualbox" do |vb|
-  #   # Don't boot with headless mode
-  #   vb.gui = true
-  #
-  #   # Use VBoxManage to customize the VM. For example to change memory:
-  #    vb.customize ["modifyvm", :id, "--cpuexecutioncap", "50"]
-  #    vb.customize ["modifyvm", :id, "--ioapic", "on"]
-  #    vb.customize ["modifyvm", :id, "--memory", "4096"]
-  #    vb.customize ["modifyvm", :id, "--cpus", "4"]
- #   end
-
-  # Pull Docker Container
-  #config.vm.provision :docker do |container|
-  #    container.pull_images "nicholsn/virtuoso"
-  #end
-
-  # Build from source
-  config.vm.provision "shell" do |s|
-    s.inline = "apt-get update"
-    s.inline += "&& apt-get install -y ansible"
-    s.inline += "&& ansible-galaxy install nicholsn.supervisor --force"
-    s.inline += "&& ansible-galaxy install nicholsn.virtuoso --force"
-    s.inline += "&& ansible-playbook -i /etc/ansible/roles/nicholsn.virtuoso/hosts /etc/ansible/roles/nicholsn.virtuoso/local.yml -v"
+  config.vm.provision "ansible" do |ansible|
+      ansible.playbook = "ansible/server.yml"
+      ansible.verbose = 'vv'
   end
+
 end
